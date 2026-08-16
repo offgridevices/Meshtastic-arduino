@@ -35,6 +35,7 @@ uint32_t my_node_num = 0;
 void (*text_message_callback)(uint32_t from, uint32_t to,  uint8_t channel, const char* text) = NULL;
 void (*portnum_callback)(uint32_t from, uint32_t to,  uint8_t channel, meshtastic_PortNum port, meshtastic_Data_payload_t *payload) = NULL;
 void (*encrypted_callback)(uint32_t from, uint32_t to,  uint8_t channel, meshtastic_MeshPacket_public_key_t pubKey, meshtastic_MeshPacket_encrypted_t *enc_payload) = NULL;
+void (*packet_meta_callback)(const mt_packet_meta_t * meta) = NULL;
 
 void (*node_report_callback)(mt_node_t *, mt_nr_progress_t) = NULL;
 mt_node_t node;
@@ -152,6 +153,51 @@ void set_encrypted_callback(void (*callback)(uint32_t from, uint32_t to,  uint8_
 
 void set_text_message_callback(void (*callback)(uint32_t from, uint32_t to,  uint8_t channel, const char* text)) {
   text_message_callback = callback;
+}
+
+void set_packet_meta_callback(void (*callback)(const mt_packet_meta_t * meta)) {
+  packet_meta_callback = callback;
+}
+
+// Hand the caller everything the radio knows about how a packet arrived.
+//
+// Called for every mesh packet before it is dispatched by portnum, and
+// deliberately independent of whether any payload callback is interested in
+// it: an unrecognised portnum and an undecryptable payload are both still
+// evidence about the radio link, and are exactly the packets the switch below
+// would otherwise drop without a trace.
+static void report_packet_meta(const meshtastic_MeshPacket * p) {
+  if (packet_meta_callback == NULL) return;
+
+  mt_packet_meta_t meta;
+  meta.from       = p->from;
+  meta.to         = p->to;
+  meta.id         = p->id;
+  meta.rx_time    = p->rx_time;
+  meta.channel    = p->channel;
+  meta.rx_snr     = p->rx_snr;
+  meta.rx_rssi    = p->rx_rssi;
+  meta.hop_limit  = p->hop_limit;
+  meta.hop_start  = p->hop_start;
+  meta.next_hop   = p->next_hop;
+  meta.relay_node = p->relay_node;
+  meta.via_mqtt   = p->via_mqtt;
+  meta.is_decoded = (p->which_payload_variant == meshtastic_MeshPacket_decoded_tag);
+
+  if (meta.is_decoded) {
+    meta.portnum      = (uint32_t)p->decoded.portnum;
+    meta.payload_size = p->decoded.payload.size;
+  } else {
+    // portnum lives inside the encrypted payload, so it is genuinely unknown
+    // here rather than merely absent. The size is still worth reporting.
+    meta.portnum = 0;
+    meta.payload_size =
+      (p->which_payload_variant == meshtastic_MeshPacket_encrypted_tag)
+        ? p->encrypted.size
+        : 0;
+  }
+
+  packet_meta_callback(&meta);
 }
 
 bool handle_id_tag(uint32_t id) {
@@ -569,6 +615,9 @@ bool handle_config_complete_id(uint32_t now, uint32_t config_complete_id) {
 }
 
 bool handle_mesh_packet(meshtastic_MeshPacket *meshPacket) {
+  // Before anything else, and regardless of what happens below.
+  report_packet_meta(meshPacket);
+
   if (meshPacket->which_payload_variant == meshtastic_MeshPacket_decoded_tag) {
     switch (meshPacket->decoded.portnum) {
         case meshtastic_PortNum_TEXT_MESSAGE_APP:

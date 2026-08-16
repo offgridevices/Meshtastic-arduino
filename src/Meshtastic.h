@@ -82,6 +82,47 @@ void set_portnum_callback(void (*callback)(uint32_t from, uint32_t to,  uint8_t 
 // Set the callback function that gets called when the node receives an encrypted payload
 void set_encrypted_callback(void (*callback)(uint32_t from, uint32_t to,  uint8_t channel, meshtastic_MeshPacket_public_key_t pubKey, meshtastic_MeshPacket_encrypted_t *payload));
 
+// Reception metadata for a single packet, exactly as the radio reported it.
+//
+// The callbacks above deliver payloads, which is what an application wants.
+// Anything measuring the radio link itself needs the fields below instead:
+// rx_rssi and rx_snr are set only on reception and are never sent over the
+// air, so once they are dropped they cannot be recovered from anywhere else.
+//
+// hop_start minus hop_limit is the number of hops the packet travelled. Zero
+// means it arrived directly from the node that sent it, which is the only
+// case that measures a single radio path rather than the last relay's.
+//
+// next_hop and relay_node are each the *last byte* of a node number rather
+// than a whole one, so they hint at routing without identifying a node.
+typedef struct {
+  uint32_t from;
+  uint32_t to;
+  uint32_t id;
+  uint32_t rx_time;       // Seconds since 1970, or 0 if the radio's clock is unset
+  uint8_t  channel;
+  float    rx_snr;        // dB
+  int32_t  rx_rssi;       // dBm, negative; 0 means locally originated
+  uint8_t  hop_limit;     // Hops still remaining
+  uint8_t  hop_start;     // Hops the packet was sent with
+  uint8_t  next_hop;
+  uint8_t  relay_node;
+  bool     via_mqtt;      // True if it reached us over the internet, not the air
+  bool     is_decoded;    // False when the payload could not be decrypted
+  uint32_t portnum;       // Only meaningful when is_decoded is true
+  uint16_t payload_size;  // Payload bytes, decrypted or not
+} mt_packet_meta_t;
+
+// Set the callback that gets called for every packet the radio reports,
+// before and independently of the payload callbacks above.
+//
+// Unlike those, this one fires for packets of unrecognised portnum and for
+// packets that could not be decrypted, because a packet that arrived is
+// evidence about the link whether or not its contents could be read.
+//
+// The struct passed in is only valid for the duration of the call.
+void set_packet_meta_callback(void (*callback)(const mt_packet_meta_t * meta));
+
 // Send a text message with *text* as payload, to a destination node (optional), on a certain channel (optional).
 bool mt_send_text(const char * text, uint32_t dest = BROADCAST_ADDR, uint8_t channel_index = 0);
 
