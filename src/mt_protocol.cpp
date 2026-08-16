@@ -36,6 +36,12 @@ void (*text_message_callback)(uint32_t from, uint32_t to,  uint8_t channel, cons
 void (*portnum_callback)(uint32_t from, uint32_t to,  uint8_t channel, meshtastic_PortNum port, meshtastic_Data_payload_t *payload) = NULL;
 void (*encrypted_callback)(uint32_t from, uint32_t to,  uint8_t channel, meshtastic_MeshPacket_public_key_t pubKey, meshtastic_MeshPacket_encrypted_t *enc_payload) = NULL;
 void (*packet_meta_callback)(const mt_packet_meta_t * meta) = NULL;
+void (*radio_config_callback)(const mt_radio_config_t * config) = NULL;
+
+// Config arrives in separate messages, so it is accumulated here and the
+// caller is told after each piece lands rather than being made to wait for a
+// completeness signal the protocol does not send.
+static mt_radio_config_t radio_config;
 
 void (*node_report_callback)(mt_node_t *, mt_nr_progress_t) = NULL;
 mt_node_t node;
@@ -159,6 +165,10 @@ void set_packet_meta_callback(void (*callback)(const mt_packet_meta_t * meta)) {
   packet_meta_callback = callback;
 }
 
+void set_radio_config_callback(void (*callback)(const mt_radio_config_t * config)) {
+  radio_config_callback = callback;
+}
+
 // Hand the caller everything the radio knows about how a packet arrived.
 //
 // Called for every mesh packet before it is dispatched by portnum, and
@@ -205,7 +215,41 @@ bool handle_id_tag(uint32_t id) {
   return true;
 }
 
+// Record the settings a caller needs to tell whether two radios are actually
+// comparable, and report them as each piece arrives.
+static void capture_radio_config(const meshtastic_Config *config) {
+  switch (config->which_payload_variant) {
+    case meshtastic_Config_lora_tag:
+      radio_config.has_lora      = true;
+      radio_config.use_preset    = config->payload_variant.lora.use_preset;
+      radio_config.modem_preset  = (uint8_t)config->payload_variant.lora.modem_preset;
+      radio_config.region        = (uint8_t)config->payload_variant.lora.region;
+      radio_config.hop_limit     = (uint8_t)config->payload_variant.lora.hop_limit;
+      radio_config.tx_enabled    = config->payload_variant.lora.tx_enabled;
+      radio_config.tx_power      = (int8_t)config->payload_variant.lora.tx_power;
+      radio_config.bandwidth     = config->payload_variant.lora.bandwidth;
+      radio_config.spread_factor = (uint8_t)config->payload_variant.lora.spread_factor;
+      radio_config.coding_rate   = (uint8_t)config->payload_variant.lora.coding_rate;
+      radio_config.channel_num   = config->payload_variant.lora.channel_num;
+      radio_config.ignore_mqtt   = config->payload_variant.lora.ignore_mqtt;
+      break;
+
+    case meshtastic_Config_position_tag:
+      radio_config.has_position    = true;
+      radio_config.fixed_position  = config->payload_variant.position.fixed_position;
+      radio_config.gps_enabled     = config->payload_variant.position.gps_enabled;
+      break;
+
+    default:
+      return;  // Nothing here changes what the caller was told.
+  }
+
+  if (radio_config_callback != NULL) radio_config_callback(&radio_config);
+}
+
 bool handle_config_tag(meshtastic_Config *config) {
+  capture_radio_config(config);
+
   switch (config->which_payload_variant) {
     case meshtastic_Config_device_tag:
       d("Config:device_tag:  role: %d\r\n", config->payload_variant.device.role);

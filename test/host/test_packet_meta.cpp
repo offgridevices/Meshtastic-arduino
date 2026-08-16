@@ -15,6 +15,7 @@ SerialStub Serial;
 
 // Defined in mt_protocol.cpp; not exposed in a header.
 bool handle_mesh_packet(meshtastic_MeshPacket * meshPacket);
+bool handle_config_tag(meshtastic_Config * config);
 
 // --- link stubs for the transports we are not exercising -------------------
 bool mt_wifi_loop(uint32_t) { return false; }
@@ -32,6 +33,14 @@ static int seen_count = 0;
 static void capture(const mt_packet_meta_t * meta) {
   seen = *meta;
   seen_count++;
+}
+
+static mt_radio_config_t seen_cfg;
+static int cfg_count = 0;
+
+static void capture_config(const mt_radio_config_t * cfg) {
+  seen_cfg = *cfg;
+  cfg_count++;
 }
 
 static meshtastic_MeshPacket base_packet() {
@@ -159,6 +168,82 @@ int main() {
     p.decoded.portnum = meshtastic_PortNum_TEXT_MESSAGE_APP;
     handle_mesh_packet(&p);
     check(seen_count == 0, "callback can be unregistered");
+  }
+
+  // --- radio settings -----------------------------------------------------
+
+  // 8. Nothing registered: must not crash.
+  {
+    cfg_count = 0;
+    meshtastic_Config c = meshtastic_Config_init_default;
+    c.which_payload_variant = meshtastic_Config_lora_tag;
+    handle_config_tag(&c);
+    check(cfg_count == 0, "no config callback registered -> nothing reported, no crash");
+  }
+
+  set_radio_config_callback(capture_config);
+
+  // 9. The LoRa settings that decide whether two radios are comparable.
+  {
+    cfg_count = 0;
+    meshtastic_Config c = meshtastic_Config_init_default;
+    c.which_payload_variant = meshtastic_Config_lora_tag;
+    c.payload_variant.lora.use_preset   = true;
+    c.payload_variant.lora.modem_preset = meshtastic_Config_LoRaConfig_ModemPreset_LONG_FAST;
+    c.payload_variant.lora.region       = meshtastic_Config_LoRaConfig_RegionCode_US;
+    c.payload_variant.lora.hop_limit    = 3;
+    c.payload_variant.lora.tx_enabled   = true;
+    c.payload_variant.lora.tx_power     = 22;
+    handle_config_tag(&c);
+
+    check(cfg_count == 1,                    "lora config reported");
+    check(seen_cfg.has_lora == true,         "lora config marked present");
+    check(seen_cfg.use_preset == true,       "use_preset carried through");
+    check(seen_cfg.modem_preset ==
+          (uint8_t)meshtastic_Config_LoRaConfig_ModemPreset_LONG_FAST, "modem preset carried through");
+    check(seen_cfg.region ==
+          (uint8_t)meshtastic_Config_LoRaConfig_RegionCode_US, "region carried through");
+    check(seen_cfg.hop_limit == 3,           "hop limit carried through");
+    check(seen_cfg.tx_enabled == true,       "tx_enabled carried through");
+    check(seen_cfg.tx_power == 22,           "tx power carried through");
+    check(seen_cfg.has_position == false,    "position config not yet claimed present");
+  }
+
+  // 10. Position config arrives separately and must not erase the LoRa part.
+  {
+    cfg_count = 0;
+    meshtastic_Config c = meshtastic_Config_init_default;
+    c.which_payload_variant = meshtastic_Config_position_tag;
+    c.payload_variant.position.fixed_position = true;
+    c.payload_variant.position.gps_enabled    = false;
+    handle_config_tag(&c);
+
+    check(cfg_count == 1,                     "position config reported");
+    check(seen_cfg.has_position == true,      "position config marked present");
+    check(seen_cfg.fixed_position == true,    "fixed position carried through");
+    check(seen_cfg.gps_enabled == false,      "gps_enabled carried through");
+    check(seen_cfg.has_lora == true,          "earlier lora config survives a later message");
+    check(seen_cfg.hop_limit == 3,            "earlier lora values survive a later message");
+  }
+
+  // 11. Config sections we do not care about must not wake the caller.
+  {
+    cfg_count = 0;
+    meshtastic_Config c = meshtastic_Config_init_default;
+    c.which_payload_variant = meshtastic_Config_bluetooth_tag;
+    handle_config_tag(&c);
+    check(cfg_count == 0, "an unrelated config section reports nothing");
+  }
+
+  // 12. A radio with no fixed position is distinguishable from one not yet asked.
+  {
+    cfg_count = 0;
+    meshtastic_Config c = meshtastic_Config_init_default;
+    c.which_payload_variant = meshtastic_Config_position_tag;
+    c.payload_variant.position.fixed_position = false;
+    handle_config_tag(&c);
+    check(seen_cfg.has_position == true && seen_cfg.fixed_position == false,
+          "'asked, and it has no fixed position' is distinct from 'not asked'");
   }
 
   std::printf("\n%s\n", failures ? "FAILURES PRESENT" : "all checks passed");

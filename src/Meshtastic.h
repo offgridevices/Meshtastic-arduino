@@ -123,6 +123,41 @@ typedef struct {
 // The struct passed in is only valid for the duration of the call.
 void set_packet_meta_callback(void (*callback)(const mt_packet_meta_t * meta));
 
+// The radio's own settings, as reported during the initial config exchange.
+//
+// The library receives all of this and currently only writes it to the debug
+// log. It matters to a caller for a reason RSSI does not cover: two radios can
+// both be working perfectly and still produce incomparable results because one
+// is on a different preset, region or hop limit. Reading the settings back off
+// the radio is the only way to catch that without a phone.
+//
+// Config arrives in pieces, so the callback fires more than once. The has_*
+// flags say which parts have been seen so far; fields belonging to a part that
+// has not arrived are zero and mean nothing yet.
+typedef struct {
+  bool     has_lora;
+  bool     use_preset;      // False means the bandwidth/spread/coding fields govern
+  uint8_t  modem_preset;    // meshtastic_Config_LoRaConfig_ModemPreset
+  uint8_t  region;          // meshtastic_Config_LoRaConfig_RegionCode
+  uint8_t  hop_limit;
+  bool     tx_enabled;
+  int8_t   tx_power;
+  uint32_t bandwidth;
+  uint8_t  spread_factor;
+  uint8_t  coding_rate;
+  uint32_t channel_num;
+  bool     ignore_mqtt;
+
+  bool     has_position;
+  bool     fixed_position;  // False means the radio has no position of its own
+  bool     gps_enabled;
+} mt_radio_config_t;
+
+// Set the callback that reports the radio's settings as they arrive.
+//
+// The struct passed in is only valid for the duration of the call.
+void set_radio_config_callback(void (*callback)(const mt_radio_config_t * config));
+
 // Send a text message with *text* as payload, to a destination node (optional), on a certain channel (optional).
 bool mt_send_text(const char * text, uint32_t dest = BROADCAST_ADDR, uint8_t channel_index = 0);
 
