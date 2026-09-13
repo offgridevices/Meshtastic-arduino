@@ -28,7 +28,13 @@ typedef struct {
   char short_name[MAX_SHORT_NAME_LEN];
   double latitude;
   double longitude;
-  int8_t altitude;  // To the nearest meter above (or below) sea level
+  // To the nearest meter above (or below) sea level.
+  //
+  // Full width on purpose. The protocol carries this as a 32-bit value, and
+  // narrowing it to a byte does not merely lose a reading above 127 m — it
+  // replaces it with a plausible wrong one, because the value wraps rather
+  // than saturating. 1500 m arrives as -36, which looks like a valley.
+  int32_t altitude;
   uint16_t ground_speed; // meters per second
   uint8_t battery_level;
   uint32_t last_heard_from;

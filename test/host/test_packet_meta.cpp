@@ -16,6 +16,9 @@ SerialStub Serial;
 // Defined in mt_protocol.cpp; not exposed in a header.
 bool handle_mesh_packet(meshtastic_MeshPacket * meshPacket);
 bool handle_config_tag(meshtastic_Config * config);
+bool handle_node_info(meshtastic_NodeInfo * nodeInfo);
+bool handle_metatag_data(meshtastic_DeviceMetadata * meta);
+extern void (*node_report_callback)(mt_node_t *, mt_nr_progress_t);
 
 // --- link stubs for the transports we are not exercising -------------------
 bool mt_wifi_loop(uint32_t) { return false; }
@@ -41,6 +44,28 @@ static int cfg_count = 0;
 static void capture_config(const mt_radio_config_t * cfg) {
   seen_cfg = *cfg;
   cfg_count++;
+}
+
+static mt_node_t seen_node;
+static int node_count = 0;
+
+static void capture_node(mt_node_t * node, mt_nr_progress_t progress) {
+  if (node == NULL) return;   // the end-of-report marker carries no node
+  seen_node = *node;
+  node_count++;
+}
+
+// A node report with a position and nothing surprising in it. Each test
+// changes only the field it is about.
+static meshtastic_NodeInfo base_node_info() {
+  meshtastic_NodeInfo ni = meshtastic_NodeInfo_init_default;
+  ni.num = 0x11223344;
+  ni.last_heard = 1786000000;
+  ni.has_position = true;
+  ni.position.latitude_i  = 407128000;
+  ni.position.longitude_i = -740060000;
+  ni.position.altitude = 0;
+  return ni;
 }
 
 static meshtastic_MeshPacket base_packet() {
@@ -245,6 +270,40 @@ int main() {
     check(seen_cfg.has_position == true && seen_cfg.fixed_position == false,
           "'asked, and it has no fixed position' is distinct from 'not asked'");
   }
+
+  node_report_callback = capture_node;
+
+  // --- node reports -------------------------------------------------------
+  //
+  // These exercise handle_node_info directly. The normal way in is
+  // mt_request_node_report, which first sends a request to a radio that does
+  // not exist here, so the callback is installed by hand instead.
+
+  // 13. Altitude above a signed byte survives intact.
+  //
+  //     The protocol carries altitude as a full 32-bit value. Narrowing it to
+  //     a byte does not merely lose the reading, it replaces it with a
+  //     plausible wrong one: 1500 m wraps to -36, which reads as a sensible
+  //     spot in a valley. Every site above 127 m was being recorded wrongly.
+  {
+    node_count = 0;
+    meshtastic_NodeInfo ni = base_node_info();
+    ni.position.altitude = 1500;
+    handle_node_info(&ni);
+
+    check(node_count == 1,               "node report delivered");
+    check(seen_node.altitude == 1500,    "altitude above 127 m survives");
+  }
+
+  // 14. And below it, for a reading under sea level or a deep valley.
+  {
+    node_count = 0;
+    meshtastic_NodeInfo ni = base_node_info();
+    ni.position.altitude = -430;
+    handle_node_info(&ni);
+    check(seen_node.altitude == -430,    "altitude below -127 m survives");
+  }
+
 
   std::printf("\n%s\n", failures ? "FAILURES PRESENT" : "all checks passed");
   return failures ? 1 : 0;
