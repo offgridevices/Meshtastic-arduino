@@ -10,6 +10,7 @@
 #define MAX_USER_ID_LEN (sizeof(meshtastic_User().id) - 1)
 #define MAX_LONG_NAME_LEN (sizeof(meshtastic_User().long_name) - 1)
 #define MAX_SHORT_NAME_LEN (sizeof(meshtastic_User().short_name) - 1)
+#define MAX_FIRMWARE_VERSION_LEN (sizeof(meshtastic_DeviceMetadata().firmware_version) - 1)
 
 #define BAUD_DEFAULT 9600
 #define BROADCAST_ADDR 0xFFFFFFFF
@@ -43,6 +44,14 @@ typedef struct {
   float voltage;
   float channel_utilization;
   float air_util_tx;
+
+  // Seconds since the node last restarted, as it reports them.
+  //
+  // has_uptime is what separates "up for no time at all" from "did not say":
+  // a node that has just booted honestly reports 0, and the field is optional
+  // within the metrics block, so zero alone cannot carry both meanings.
+  uint32_t uptime_seconds;
+  bool     has_uptime;
 } mt_node_t;
 
 // Initialize, using wifi to connect to the MT radio
@@ -157,6 +166,18 @@ typedef struct {
   bool     has_position;
   bool     fixed_position;  // False means the radio has no position of its own
   bool     gps_enabled;
+
+  // The radio's own firmware version, e.g. "2.7.26.54e0d8d".
+  //
+  // Strictly this is device metadata rather than configuration, but it
+  // arrives unprompted in the same exchange and answers the same question —
+  // what is this radio, and is it the same as the others? Carrying it here
+  // keeps that to one callback rather than two.
+  //
+  // has_metadata is false until the radio has sent it; the string is empty
+  // until then, never stale.
+  bool     has_metadata;
+  char     firmware_version[MAX_FIRMWARE_VERSION_LEN + 1];
 } mt_radio_config_t;
 
 // Set the callback that reports the radio's settings as they arrive.

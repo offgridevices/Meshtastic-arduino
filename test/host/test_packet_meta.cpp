@@ -304,6 +304,89 @@ int main() {
     check(seen_node.altitude == -430,    "altitude below -127 m survives");
   }
 
+  // 15. Uptime is carried, and its absence is distinguishable from zero.
+  //
+  //     A node that has just booted genuinely reports 0. Without a separate
+  //     flag, "up for no time at all" and "did not say" are the same value —
+  //     the same confusion the decoded/portnum pair was split to avoid.
+  {
+    node_count = 0;
+    meshtastic_NodeInfo ni = base_node_info();
+    ni.has_device_metrics = true;
+    ni.device_metrics.has_uptime_seconds = true;
+    ni.device_metrics.uptime_seconds = 86400;
+    handle_node_info(&ni);
+
+    check(seen_node.has_uptime == true,        "uptime marked present");
+    check(seen_node.uptime_seconds == 86400,   "uptime carried through");
+  }
+
+  // 16. A report with metrics but no uptime field says so.
+  {
+    node_count = 0;
+    meshtastic_NodeInfo ni = base_node_info();
+    ni.has_device_metrics = true;
+    ni.device_metrics.has_uptime_seconds = false;
+    ni.device_metrics.uptime_seconds = 0;
+    handle_node_info(&ni);
+    check(seen_node.has_uptime == false,  "uptime absent when the radio did not report it");
+  }
+
+  // 17. A report with no device-metrics block at all says so too.
+  {
+    node_count = 0;
+    meshtastic_NodeInfo ni = base_node_info();
+    ni.has_device_metrics = false;
+    handle_node_info(&ni);
+    check(seen_node.has_uptime == false,  "uptime absent when there were no metrics at all");
+  }
+
+  // 18. A node that has just booted reports zero, and that is not absence.
+  {
+    node_count = 0;
+    meshtastic_NodeInfo ni = base_node_info();
+    ni.has_device_metrics = true;
+    ni.device_metrics.has_uptime_seconds = true;
+    ni.device_metrics.uptime_seconds = 0;
+    handle_node_info(&ni);
+    check(seen_node.has_uptime == true && seen_node.uptime_seconds == 0,
+          "a freshly booted node is distinct from one that did not report");
+  }
+
+  // --- device metadata ----------------------------------------------------
+
+  // 19. The radio's own firmware version reaches the caller.
+  //
+  //     The radio sends this unprompted during the config exchange. It was
+  //     being written to a debug log and discarded, which left a recording
+  //     unable to say which firmware measured it.
+  {
+    cfg_count = 0;
+    meshtastic_DeviceMetadata meta = meshtastic_DeviceMetadata_init_default;
+    std::strncpy(meta.firmware_version, "2.7.26.54e0d8d", sizeof(meta.firmware_version) - 1);
+    handle_metatag_data(&meta);
+
+    check(cfg_count == 1,                    "device metadata reported");
+    check(seen_cfg.has_metadata == true,     "metadata marked present");
+    check(std::strcmp(seen_cfg.firmware_version, "2.7.26.54e0d8d") == 0,
+          "radio firmware version carried through");
+  }
+
+  // 20. Metadata must not erase settings that arrived earlier.
+  {
+    check(seen_cfg.has_lora == true,  "earlier lora config survives a metadata message");
+    check(seen_cfg.hop_limit == 3,    "earlier lora values survive a metadata message");
+  }
+
+  // 21. With no callback registered, metadata must not crash.
+  {
+    set_radio_config_callback(NULL);
+    cfg_count = 0;
+    meshtastic_DeviceMetadata meta = meshtastic_DeviceMetadata_init_default;
+    std::strncpy(meta.firmware_version, "2.7.26", sizeof(meta.firmware_version) - 1);
+    handle_metatag_data(&meta);
+    check(cfg_count == 0, "no config callback registered -> metadata reports nothing, no crash");
+  }
 
   std::printf("\n%s\n", failures ? "FAILURES PRESENT" : "all checks passed");
   return failures ? 1 : 0;

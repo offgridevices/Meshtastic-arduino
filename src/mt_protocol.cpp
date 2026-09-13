@@ -557,6 +557,15 @@ bool handle_xmodemPacket_tag(meshtastic_XModem *packet) {
 }
 
 bool handle_metatag_data(meshtastic_DeviceMetadata *meta) {
+  // Kept, not just logged. A recording that cannot name the firmware that
+  // produced it cannot be defended later, and this is the only place the
+  // radio volunteers it.
+  radio_config.has_metadata = true;
+  strncpy(radio_config.firmware_version, meta->firmware_version,
+          sizeof(radio_config.firmware_version) - 1);
+  radio_config.firmware_version[sizeof(radio_config.firmware_version) - 1] = '\0';
+  if (radio_config_callback != NULL) radio_config_callback(&radio_config);
+
   d("metatag_data:FW Version: %s\r\n", meta->firmware_version);
   d("metatag_data:device_state_version: %d\r\n", meta->device_state_version);
   d("metatag_data:canShutdown: %d\r\n", meta->canShutdown);
@@ -633,11 +642,18 @@ bool handle_node_info(meshtastic_NodeInfo *nodeInfo) {
     node.voltage = nodeInfo->device_metrics.voltage;
     node.channel_utilization = nodeInfo->device_metrics.channel_utilization;
     node.air_util_tx = nodeInfo->device_metrics.air_util_tx;
+    // Optional within the metrics block, so its presence is reported
+    // separately: a node that just booted reports zero and means it.
+    node.has_uptime = nodeInfo->device_metrics.has_uptime_seconds;
+    node.uptime_seconds = node.has_uptime
+                            ? nodeInfo->device_metrics.uptime_seconds : 0;
   } else {
     node.battery_level = 0;
     node.voltage = NAN;
     node.channel_utilization = NAN; 
     node.air_util_tx = NAN;
+    node.has_uptime = false;
+    node.uptime_seconds = 0;
   }
 
   node_report_callback(&node, MT_NR_IN_PROGRESS);
